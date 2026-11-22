@@ -7,12 +7,13 @@
     }
     var div = document.createElement('div');
     div.textContent = String(str);
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;');
   }
 
   var listElem = document.getElementById("list-content");
   listElem.onclick = handleClick;
   var currentPath;
+  var managed = false;
   var pathElem = document.getElementById("current-path");
 
   pathElem.onblur = function () {
@@ -160,7 +161,7 @@
         var row = fileElem.closest('tr');
         if (fileClass.indexOf('parent-icon') > -1) {
           update_list(currentPath.replace(/\/[^/]+\/?$/, '') || '/');
-        } else if (fileClass.indexOf('file-icon') > -1 && row) {
+        } else if (fileClass.indexOf('file-icon') > -1 && row && managed) {
           openpath(row.dataset.filename);
         } else if (fileClass.indexOf('link-icon') > -1) {
           if (row && row.dataset.linktarget) {
@@ -203,7 +204,7 @@
           var linktarget = '';
           if (isLink && name.indexOf(' -> ') > -1) {
             var parts = name.split(' -> ');
-            displayname = parts[0] + ' -> ' + escapeHtml(parts[1]);
+            displayname = escapeHtml(parts[0]) + ' -> ' + escapeHtml(parts[1]);
             filename = parts[0];
             linktarget = parts[1];
           } else {
@@ -225,9 +226,9 @@
             + '<td class="cbi-value-field cbi-value-size">' + escapeHtml(size) + '</td>'
             + '<td class="cbi-value-field cbi-value-perm">' + escapeHtml(perm) + '</td>'
             + '<td class="cbi-section-table-cell">'
-            + '<button class="cbi-button cbi-button-edit">重命名</button>'
+            + (managed ? '<button class="cbi-button cbi-button-edit">重命名</button>'
             + '<button class="cbi-button cbi-button-remove">删除</button>'
-            + installBtn
+            + installBtn : '')
             + '</td>'
             + '</tr>';
         }
@@ -246,13 +247,10 @@
       }
       currentPath = path;
       pathElem.value = path;
-      uploadToggle.hidden = path === '/';
-      if (path === '/') {
-        isUploadHide = true;
-        uploadContainer.style.display = 'none';
-        listElem.textContent = '请选择上方的目录入口。';
-        return;
-      }
+      managed = false;
+      uploadToggle.hidden = true;
+      isUploadHide = true;
+      uploadContainer.style.display = 'none';
       listElem.textContent = '正在读取 ' + path;
       fetch('/cgi-bin/luci/admin/nas/fileassistant/list?path=' + encodeURIComponent(path), {cache: 'no-store'})
         .then(function (response) {
@@ -261,6 +259,8 @@
         }).then(function (res) {
           if (currentPath !== path) return;
           if (!res || res.ec !== 0) throw new Error((res && res.error) || '列表接口返回异常');
+          managed = res.managed === true;
+          uploadToggle.hidden = !managed;
           refresh_list(res.data, path);
         }).catch(function (err) {
           if (currentPath === path) listElem.textContent = '无法读取目录 ' + path + '：' + err.message;

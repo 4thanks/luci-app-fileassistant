@@ -37,10 +37,12 @@ function list_response(path, success, error_msg)
     luci.http.prepare_content("application/json")
     local result
     if success then
-        local rv = scandir(path)
+        local rv, scan_error = scandir(path)
         result = {
-            ec = 0,
-            data = rv
+            ec = rv and 0 or 1,
+            data = rv,
+            error = scan_error,
+            managed = is_path_allowed(path)
         }
     else
         result = {
@@ -81,14 +83,8 @@ end
 
 function fileassistant_list()
     local path = sanitize_path(luci.http.formvalue("path")) or "/"
-    local allowed, realpath = is_path_allowed(path)
-    if not allowed then
-        list_response(path, false, "Path not allowed")
-        return
-    end
-    -- Bug fix: Lua 中 not 优先级高于 ==，原写法恒为 false
-    if not nixio.fs.stat(realpath) or nixio.fs.stat(realpath, "type") ~= "dir" then
-        list_response(path, false, "Invalid directory")
+    if path:sub(1, 1) ~= "/" then
+        list_response(path, false, "请输入绝对路径")
         return
     end
     list_response(path, true)
@@ -313,13 +309,13 @@ end
 
 function scandir(directory)
     local results = {}
-    local allowed, realpath = is_path_allowed(directory)
-    if not allowed then
-        return results
+    local realpath = nixio.fs.realpath(directory)
+    if not realpath or nixio.fs.stat(realpath, "type") ~= "dir" then
+        return nil, "目录不存在或无法访问"
     end
     local dir = nixio.fs.dir(realpath)
     if not dir then
-        return results
+        return nil, "无法读取目录"
     end
     local entries = {}
     for entry in dir do
