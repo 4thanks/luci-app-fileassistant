@@ -27,8 +27,8 @@ function index()
     -- API 路由在新旧版本均需注册（fb.js 的 AJAX 请求依赖这些路由）
     entry({"admin", "nas", "fileassistant", "list"}, call("fileassistant_list"), nil)
     entry({"admin", "nas", "fileassistant", "open"}, call("fileassistant_open"), nil)
-    entry({"admin", "nas", "fileassistant", "delete"}, call("fileassistant_delete"), nil)
-    entry({"admin", "nas", "fileassistant", "rename"}, call("fileassistant_rename"), nil)
+    entry({"admin", "nas", "fileassistant", "delete"}, post("fileassistant_delete"), nil)
+    entry({"admin", "nas", "fileassistant", "rename"}, post("fileassistant_rename"), nil)
     entry({"admin", "nas", "fileassistant", "upload"}, call("fileassistant_upload"), nil)
     entry({"admin", "nas", "fileassistant", "install"}, call("fileassistant_install"), nil)
 end
@@ -60,7 +60,7 @@ function is_path_allowed(path)
         return false
     end
     for _, allowed in ipairs(ALLOWED_PATHS) do
-        if realpath:find("^" .. allowed) or realpath == allowed then
+        if realpath:sub(1, #allowed + 1) == allowed .. "/" or realpath == allowed then
             return true, realpath
         end
     end
@@ -123,36 +123,59 @@ function fileassistant_open()
     fp:close()
 end
 
+-- Resolve the parent, not the final entry: new names do not exist yet,
+-- and operations on a symlink must affect the link, not its target.
+local function entry_path(path)
+    if not path then return end
+    local parent, name = path:match("^(.*)/([^/]+)$")
+    if not parent or name == "." or name == ".." then return end
+    local allowed, dir = is_path_allowed(parent)
+    if allowed then return dir .. "/" .. name, dir end
+end
+
+local function writable_session()
+    local sid = luci.dispatcher.context.authsession
+    local acl = sid and luci.util.ubus("session", "access", {
+        ubus_rpc_session = sid, scope = "access-group",
+        object = "luci-app-fileassistant", ["function"] = "write"
+    })
+    if acl and acl.access then return true end
+    list_response("/", false, "当前 LuCI 会话没有文件助手写权限")
+end
+
 function fileassistant_delete()
+    if not writable_session() then return end
     local path = sanitize_path(luci.http.formvalue("path"))
     local isdir = luci.http.formvalue("isdir")
     if not path then
         list_response("/", false, "Invalid path")
         return
     end
-    local allowed, realpath = is_path_allowed(path)
-    if not allowed then
+    local realpath, parent = entry_path(path)
+    if not realpath then
         list_response(path, false, "Path not allowed")
         return
     end
-    local success, err
-    if isdir == "1" then
-        if nixio.fs.stat(realpath, "type") == "dir" then
-            success, err = rmtree(realpath)
+    local success, err, message
+    local kind = nixio.fs.lstat(realpath, "type")
+    if kind == "lnk" then
+        success, err, message = nixio.fs.unlink(realpath)
+    elseif isdir == "1" then
+        if kind == "dir" then
+            success, err, message = rmtree(realpath)
         else
             success = false
             err = "Not a directory"
         end
     else
-        if nixio.fs.stat(realpath, "type") == "reg" then
-            success = nixio.fs.unlink(realpath)
-            err = success and nil or "Failed to delete file"
+        if kind == "reg" then
+            success, err, message = nixio.fs.unlink(realpath)
         else
             success = false
             err = "Not a regular file"
         end
     end
-    list_response(nixio.fs.dirname(realpath), success, err)
+    list_response(parent, success, message or (err and tostring(err)))
 end
 
 function rmtree(path)
@@ -161,41 +184,39 @@ function rmtree(path)
         for entry in handle do
             if entry ~= "." and entry ~= ".." then
                 local subpath = path .. "/" .. entry
-                if nixio.fs.stat(subpath, "type") == "dir" then
-                    if not rmtree(subpath) then
-                        return false
-                    end
-                else
-                    if not nixio.fs.unlink(subpath) then
-                        return false
-                    end
-                end
+                local remove = nixio.fs.lstat(subpath, "type") == "dir" and rmtree or nixio.fs.unlink
+                local ok, errno, message = remove(subpath)
+                if not ok then return false, errno, message end
             end
         end
-        handle:close()
     end
     return nixio.fs.rmdir(path)
 end
 
 function fileassistant_rename()
+    if not writable_session() then return end
     local filepath = luci.http.formvalue("filepath")
     local newpath = luci.http.formvalue("newpath")
     if not filepath or not newpath then
         list_response("/", false, "Invalid parameters")
         return
     end
-    local old_allowed, old_realpath = is_path_allowed(filepath)
-    local new_allowed, new_realpath = is_path_allowed(newpath)
-    if not old_allowed or not new_allowed then
+    local old_realpath, parent = entry_path(filepath)
+    local new_realpath, dest_parent = entry_path(newpath)
+    if not old_realpath or not new_realpath or parent ~= dest_parent then
         list_response(filepath, false, "Path not allowed")
         return
     end
-    if not nixio.fs.stat(old_realpath) then
+    if not nixio.fs.lstat(old_realpath) then
         list_response(filepath, false, "Source file not found")
         return
     end
-    local success = nixio.fs.rename(old_realpath, new_realpath)
-    list_response(nixio.fs.dirname(old_realpath), success, success and nil or "Rename failed")
+    if nixio.fs.lstat(new_realpath) then
+        list_response(parent, false, "目标名称已存在")
+        return
+    end
+    local success, errno, message = nixio.fs.rename(old_realpath, new_realpath)
+    list_response(parent, success, message or tostring(errno))
 end
 
 function fileassistant_install()

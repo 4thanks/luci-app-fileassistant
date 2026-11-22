@@ -28,21 +28,29 @@
     }
   };
 
+  function changeEntry(action, params) {
+    var path = currentPath;
+    params.token = L.env.token;
+    return fetch('/cgi-bin/luci/admin/nas/fileassistant/' + action, {
+      method: 'POST', body: new URLSearchParams(params)
+    }).then(function (response) {
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return response.json();
+    }).then(function (res) {
+      if (res.ec !== 0) throw new Error(res.error || '未知错误');
+      if (path === currentPath) refresh_list(res.data, path);
+    }).catch(function (err) {
+      alert('操作失败：' + err.message);
+    });
+  }
+
   function removePath(filename, isdir) {
     var msg = isdir === "1" ? '你确定要删除目录 ' : '你确定要删除文件 ';
     if (confirm(msg + escapeHtml(filename) + ' 吗？')) {
-      new XHR().get('/cgi-bin/luci/admin/nas/fileassistant/delete', {
+      changeEntry('delete', {
           path: concatPath(currentPath, filename),
           isdir: isdir
-        },
-        function (x, res) {
-          if (res.ec === 0) {
-            refresh_list(res.data, currentPath);
-          } else {
-            alert('删除失败: ' + (res.error || '未知错误'));
-          }
-        }
-      );
+      });
     }
   }
 
@@ -87,18 +95,10 @@
           return;
         }
         var newpath = concatPath(currentPath, newname);
-        new XHR().get('/cgi-bin/luci/admin/nas/fileassistant/rename', {
+        changeEntry('rename', {
             filepath: concatPath(currentPath, filename),
             newpath: newpath
-          },
-          function (x, res) {
-            if (res.ec === 0) {
-              refresh_list(res.data, currentPath);
-            } else {
-              alert('重命名失败: ' + (res.error || '未知错误'));
-            }
-          }
-        );
+        });
       }
     }
   }
