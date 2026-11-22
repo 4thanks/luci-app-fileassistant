@@ -14,6 +14,7 @@
   listElem.onclick = handleClick;
   var currentPath;
   var managed = false;
+  var writable = false;
   var pathElem = document.getElementById("current-path");
 
   pathElem.onblur = function () {
@@ -212,7 +213,7 @@
           }
           var icon = (perm[0] === 'd') ? 'folder-icon' : (isLink ? 'link-icon' : 'file-icon');
           var installBtn = '';
-          if (filename.slice(filename.lastIndexOf('.') + 1).toLowerCase() === 'ipk') {
+          if (managed && filename.slice(filename.lastIndexOf('.') + 1).toLowerCase() === 'ipk') {
             installBtn = '<button class="cbi-button cbi-button-add">安装</button>';
           }
           listHtml += '<tr class="cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) + '"'
@@ -226,7 +227,7 @@
             + '<td class="cbi-value-field cbi-value-size">' + escapeHtml(size) + '</td>'
             + '<td class="cbi-value-field cbi-value-perm">' + escapeHtml(perm) + '</td>'
             + '<td class="cbi-section-table-cell">'
-            + (managed ? '<button class="cbi-button cbi-button-edit">重命名</button>'
+            + (writable ? '<button class="cbi-button cbi-button-edit">重命名</button>'
             + '<button class="cbi-button cbi-button-remove">删除</button>'
             + installBtn : '')
             + '</td>'
@@ -248,6 +249,7 @@
       currentPath = path;
       pathElem.value = path;
       managed = false;
+      writable = false;
       uploadToggle.hidden = true;
       isUploadHide = true;
       uploadContainer.style.display = 'none';
@@ -260,7 +262,8 @@
           if (currentPath !== path) return;
           if (!res || res.ec !== 0) throw new Error((res && res.error) || '列表接口返回异常');
           managed = res.managed === true;
-          uploadToggle.hidden = !managed;
+          writable = res.writable === true;
+          uploadToggle.hidden = !writable;
           refresh_list(res.data, path);
         }).catch(function (err) {
           if (currentPath === path) listElem.textContent = '无法读取目录 ' + path + '：' + err.message;
@@ -290,6 +293,7 @@
       }
       var file = uploadInput.files[0];
       var formData = new FormData();
+      formData.append('token', L.env.token);
       var filename = file.name;
       var lastSlash = Math.max(filename.lastIndexOf('\\'), filename.lastIndexOf('/'));
       if (lastSlash >= 0) {

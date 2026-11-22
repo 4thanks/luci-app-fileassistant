@@ -29,8 +29,17 @@ function index()
     entry({"admin", "nas", "fileassistant", "open"}, call("fileassistant_open"), nil)
     entry({"admin", "nas", "fileassistant", "delete"}, post("fileassistant_delete"), nil)
     entry({"admin", "nas", "fileassistant", "rename"}, post("fileassistant_rename"), nil)
-    entry({"admin", "nas", "fileassistant", "upload"}, call("fileassistant_upload"), nil)
+    entry({"admin", "nas", "fileassistant", "upload"}, post("fileassistant_upload"), nil)
     entry({"admin", "nas", "fileassistant", "install"}, call("fileassistant_install"), nil)
+end
+
+local function has_write_access()
+    local sid = luci.dispatcher.context.authsession
+    local acl = sid and luci.util.ubus("session", "access", {
+        ubus_rpc_session = sid, scope = "access-group",
+        object = "luci-app-fileassistant", ["function"] = "write"
+    })
+    return acl and acl.access == true or false
 end
 
 function list_response(path, success, error_msg)
@@ -42,7 +51,8 @@ function list_response(path, success, error_msg)
             ec = rv and 0 or 1,
             data = rv,
             error = scan_error,
-            managed = is_path_allowed(path)
+            managed = is_path_allowed(path),
+            writable = rv ~= nil and has_write_access() and nixio.fs.access(path, "w") == true
         }
     else
         result = {
@@ -121,21 +131,22 @@ end
 
 -- Resolve the parent, not the final entry: new names do not exist yet,
 -- and operations on a symlink must affect the link, not its target.
+local function existing_directory(path)
+    if not path or path:sub(1, 1) ~= "/" then return end
+    local dir = nixio.fs.realpath(path)
+    if dir and nixio.fs.stat(dir, "type") == "dir" then return dir end
+end
+
 local function entry_path(path)
-    if not path then return end
+    if not path or path:sub(1, 1) ~= "/" then return end
     local parent, name = path:match("^(.*)/([^/]+)$")
     if not parent or name == "." or name == ".." then return end
-    local allowed, dir = is_path_allowed(parent)
-    if allowed then return dir .. "/" .. name, dir end
+    local dir = existing_directory(parent == "" and "/" or parent)
+    if dir then return (dir == "/" and "" or dir) .. "/" .. name, dir end
 end
 
 local function writable_session()
-    local sid = luci.dispatcher.context.authsession
-    local acl = sid and luci.util.ubus("session", "access", {
-        ubus_rpc_session = sid, scope = "access-group",
-        object = "luci-app-fileassistant", ["function"] = "write"
-    })
-    if acl and acl.access then return true end
+    if has_write_access() then return true end
     list_response("/", false, "当前 LuCI 会话没有文件助手写权限")
 end
 
@@ -252,48 +263,54 @@ function installIPK(filepath)
 end
 
 function fileassistant_upload()
-    local uploaddir = sanitize_path(luci.http.formvalue("upload-dir")) or "/"
-    local allowed, realpath = is_path_allowed(uploaddir)
-    if not allowed then
-        list_response(uploaddir, false, "Path not allowed")
-        return
-    end
-    -- Bug fix: Lua 中 not 优先级高于 ==，原写法恒为 false
-    if not nixio.fs.stat(realpath) or nixio.fs.stat(realpath, "type") ~= "dir" then
+    if not writable_session() then return end
+    local uploaddir = sanitize_path(luci.http.formvalue("upload-dir"))
+    local realpath = existing_directory(uploaddir)
+    if not realpath then
         list_response(uploaddir, false, "Invalid directory")
         return
     end
     local filename
     local filepath
     local uploaded_size = 0
-    local fp
+    local fp, failure, complete, created
     luci.http.setfilehandler(function(meta, chunk, eof)
-        if not fp and meta and meta.name == "upload-file" then
+        if failure or complete or not meta or meta.name ~= "upload-file" then return end
+        if not fp then
             filename = sanitize_filename(meta.file)
             if not filename then
+                failure = "Invalid filename"
                 return
             end
             filepath = realpath .. "/" .. filename
-            fp = io.open(filepath, "w")
+            local errno, message
+            fp, errno, message = nixio.open(filepath, nixio.open_flags("creat", "excl", "wronly"), 420)
             if not fp then
+                failure = message or tostring(errno)
                 return
             end
+            created = true
         end
         if fp and chunk then
             uploaded_size = uploaded_size + #chunk
             if uploaded_size > MAX_UPLOAD_SIZE then
-                fp:close()
-                fp = nil
-                nixio.fs.unlink(filepath)
+                failure = "文件超过上传大小限制"
                 return
             end
-            fp:write(chunk)
+            if #chunk > 0 and fp:write(chunk) ~= #chunk then
+                failure = "文件写入失败"
+                return
+            end
         end
         if fp and eof then
-            fp:close()
+            complete = fp:close()
+            fp = nil
+            if not complete then failure = "文件关闭失败" end
         end
     end)
-    list_response(uploaddir, true)
+    if fp then fp:close() end
+    if created and not complete then nixio.fs.unlink(filepath) end
+    list_response(uploaddir, complete == true and not failure, failure or "未收到完整文件")
 end
 
 function sanitize_filename(filename)
