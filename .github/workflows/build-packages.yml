@@ -1,0 +1,47 @@
+name: Build Packages
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: luci-app-fileassistant
+          persist-credentials: false
+
+      - uses: sbwml/openwrt-gh-action-sdk@helloworld
+        env:
+          ARCH: aarch64_cortex-a53-openwrt-24.10
+          FEEDNAME: packages_ci
+          PACKAGES: luci-app-fileassistant
+
+      - name: Verify and publish IPK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          files=(bin/packages/aarch64_cortex-a53/packages_ci/luci-app-fileassistant_*.ipk)
+          [[ ${#files[@]} == 1 && -s ${files[0]} ]]
+          ipk=$(realpath "${files[0]}")
+          unpack=$(mktemp -d)
+          cd "$unpack"
+          if ar t "$ipk" >/dev/null 2>&1; then ar x "$ipk"; else tar xf "$ipk"; fi
+          tar xf data.tar.*
+          controller=usr/lib/lua/luci/controller/fileassistant.lua
+          grep -Fq 'nixio.fs.dir(realpath)' "$controller"
+          if grep -Fq 'dir:close()' "$controller"; then
+            echo 'IPK contains the broken directory iterator call' >&2
+            exit 1
+          fi
+          test -s www/luci-static/resources/fileassistant/fb.js
+          tag="build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" "$ipk" --target "$GITHUB_SHA" \
+            --title "OpenWrt 24.10 · ${GITHUB_SHA:0:7}" \
+            --notes "Source: $GITHUB_SHA · SHA256: $(sha256sum "$ipk" | cut -d' ' -f1)"

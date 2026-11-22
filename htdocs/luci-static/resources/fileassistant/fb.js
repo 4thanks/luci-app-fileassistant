@@ -10,7 +10,6 @@
     return div.innerHTML;
   }
 
-  var iwxhr = new XHR();
   var listElem = document.getElementById("list-content");
   listElem.onclick = handleClick;
   var currentPath;
@@ -32,7 +31,7 @@
   function removePath(filename, isdir) {
     var msg = isdir === "1" ? '你确定要删除目录 ' : '你确定要删除文件 ';
     if (confirm(msg + escapeHtml(filename) + ' 吗？')) {
-      iwxhr.get('/cgi-bin/luci/admin/nas/fileassistant/delete', {
+      new XHR().get('/cgi-bin/luci/admin/nas/fileassistant/delete', {
           path: concatPath(currentPath, filename),
           isdir: isdir
         },
@@ -57,7 +56,7 @@
       return;
     }
     if (confirm('你确定要安装 ' + escapeHtml(filename) + ' 吗？')) {
-      iwxhr.get('/cgi-bin/luci/admin/nas/fileassistant/install', {
+      new XHR().get('/cgi-bin/luci/admin/nas/fileassistant/install', {
           filepath: concatPath(currentPath, filename),
           isdir: isdir
         },
@@ -88,7 +87,7 @@
           return;
         }
         var newpath = concatPath(currentPath, newname);
-        iwxhr.get('/cgi-bin/luci/admin/nas/fileassistant/rename', {
+        new XHR().get('/cgi-bin/luci/admin/nas/fileassistant/rename', {
             filepath: concatPath(currentPath, filename),
             newpath: newpath
           },
@@ -242,20 +241,18 @@
     opt = opt || {};
     path = concatPath(path, '');
     if (currentPath !== path) {
-      iwxhr.get('/cgi-bin/luci/admin/nas/fileassistant/list', {
-          path: path
-        },
-        function (x, res) {
-          if (res.ec === 0) {
-            refresh_list(res.data, path);
-          } else {
-            refresh_list([], path);
-            if (res.error) {
-              console.error('Error:', res.error);
-            }
-          }
-        }
-      );
+      listElem.textContent = '正在读取 ' + path;
+      fetch('/cgi-bin/luci/admin/nas/fileassistant/list?path=' + encodeURIComponent(path), {cache: 'no-store'})
+        .then(function (response) {
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          return response.json();
+        }).then(function (res) {
+          if (currentPath !== path) return;
+          if (!res || res.ec !== 0) throw new Error((res && res.error) || '列表接口返回异常');
+          refresh_list(res.data, path);
+        }).catch(function (err) {
+          if (currentPath === path) listElem.textContent = '无法读取目录 ' + path + '：' + err.message;
+        });
       if (!opt.popState) {
         history.pushState({path: path}, null, '?path=' + encodeURIComponent(path));
       }
@@ -332,13 +329,13 @@
   }
 
   function init() {
-    var initPath = '/';
+    var initPath = '/tmp';
     var match = location.search.match(/path=([^&]+)/);
     if (match && match[1]) {
       try {
         initPath = decodeURIComponent(match[1]);
       } catch (e) {
-        initPath = '/';
+        initPath = '/tmp';
       }
     }
     update_list(initPath, {popState: true});

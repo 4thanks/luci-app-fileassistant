@@ -306,7 +306,6 @@ function scandir(directory)
             table.insert(entries, entry)
         end
     end
-    dir:close()
     table.sort(entries)
     for _, name in ipairs(entries) do
         local fullpath = realpath .. "/" .. name
