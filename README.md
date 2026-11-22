@@ -5,11 +5,11 @@ OpenWrt LuCI 文件管理器插件，提供 Web 界面进行文件浏览、上�
 ## 功能特性
 
 - **文件浏览**: 浏览目录结构，支持文件夹导航
-- **文件上传**: 支持拖拽上传，最大 500MB
+- **文件上传**: 选择文件上传，最大 500 MiB，不覆盖同名文件
 - **文件下载**: 点击文件名直接预览/下载
 - **文件管理**: 重命名、删除文件/文件夹
 - **ipk 安装**: 支持直接从文件管理器安装 .ipk 包
-- **路径安全**: 仅允许访问白名单目录 (`/mnt`, `/etc`, `/root`, `/tmp`, `/www`)
+- **访问范围**: 从 `/` 浏览目录；有文件助手写权限的 LuCI 会话可在可写目录（包括 `/usr`）管理文件
 - **响应式设计**: 支持移动端和平板设备
 
 ## 系统要求
@@ -20,11 +20,15 @@ OpenWrt LuCI 文件管理器插件，提供 Web 界面进行文件浏览、上�
 
 ## 安装
 
+### 使用本 fork 的 GitHub Actions
+
+在 **Actions → Build Packages → Run workflow** 选择 `main`。工作流在 `ubuntu-24.04` 上使用 `aarch64_cortex-a53-openwrt-24.10` SDK 编译本 fork 的源码。完成后，从 [Releases](https://github.com/4thanks/luci-app-fileassistant/releases) 下载标题含对应提交短哈希的 `.ipk` 安装。
+
 ### 从源码编译
 
 ```bash
 # 克隆到 OpenWrt SDK
-git clone https://github.com/kenzok78/luci-app-fileassistant.git
+git clone https://github.com/4thanks/luci-app-fileassistant.git
 
 # 放入 packages 目录
 mv luci-app-fileassistant /path/to/openwrt/package/feeds/luci/
@@ -44,9 +48,9 @@ opkg install luci-app-fileassistant
 
 ## 配置
 
-### 路径白名单
+### 预览、下载和 IPK 安装的路径白名单
 
-默认允许访问以下目录:
+文件预览、下载和 IPK 安装仍使用以下目录及其子目录。目录浏览、上传、重命名和删除不使用此白名单。
 
 | 路径 | 用途 |
 |------|------|
@@ -83,7 +87,7 @@ local MAX_UPLOAD_SIZE = 500 * 1024 * 1024  -- 500MB
 1. 登录 LuCI 管理界面
 2. 进入 **NAS → 文件助手**
 3. 使用顶部路径栏导航目录
-4. 点击文件夹进入，双击 `..` 返回上级
+4. 点击文件夹进入，单击 `..` 返回上级
 5. 使用右侧按钮进行重命名/删除操作
 6. 点击文件名预览/下载文件
 
@@ -116,13 +120,20 @@ luci-app-fileassistant/
 
 ## 安全说明
 
-- 所有文件操作使用 Lua 原生 API，避免 shell 命令注入
-- 路径访问受白名单限制，防止目录遍历
+- 上传、重命名和删除通过带令牌的 POST 请求执行，并校验当前 LuCI 会话的文件助手写权限。授予此权限后，用户可以修改或删除可写系统目录中的文件。
 - 文件名经过严格过滤，禁止特殊字符
 - 前端输出经过 HTML 转义，防止 XSS 攻击
 - 上传文件大小受限
 
 ## 更新日志
+
+### 2026-11-22 · 4thanks fork
+
+- `77a853b`：上传、重命名和删除扩展至 `/usr` 等可写目录。上传不覆盖同名文件；只读会话不显示写操作按钮。
+- `12d3907`：首页列出真实根目录 `/`，可从列表进入 `/usr/bin` 等子目录。
+- `ac17f8b`：修复重命名时因目标尚不存在而被拒绝，以及删除目录时误关闭迭代函数的问题。重命名和删除改用带令牌的 POST 请求并校验会话写权限。
+- `e1f6055`：增加常用目录快捷入口，修复嵌套目录点击 `..` 时返回错误层级的问题。
+- `cf1aa78`：针对 QWRT R26.11.8 的列表空白问题，修复 `nixio.fs.dir()` 迭代函数被当作句柄关闭的错误，改用浏览器 `fetch()` 加载列表。新增 GitHub Actions 工作流，编译本 fork 并发布 IPK。
 
 ### v2.0.0 (2026-03-22)
 
