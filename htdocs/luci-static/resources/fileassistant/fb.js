@@ -159,7 +159,7 @@
         var fileClass = fileElem.className || '';
         var row = fileElem.closest('tr');
         if (fileClass.indexOf('parent-icon') > -1) {
-          update_list(currentPath.replace(/\/[^/]+(\/|$)/, ''));
+          update_list(currentPath.replace(/\/[^/]+\/?$/, '') || '/');
         } else if (fileClass.indexOf('file-icon') > -1 && row) {
           openpath(row.dataset.filename);
         } else if (fileClass.indexOf('link-icon') > -1) {
@@ -241,6 +241,18 @@
     opt = opt || {};
     path = concatPath(path, '');
     if (currentPath !== path) {
+      if (!opt.popState) {
+        history.pushState({path: path}, null, '?path=' + encodeURIComponent(path));
+      }
+      currentPath = path;
+      pathElem.value = path;
+      uploadToggle.hidden = path === '/';
+      if (path === '/') {
+        isUploadHide = true;
+        uploadContainer.style.display = 'none';
+        listElem.textContent = '请选择上方的目录入口。';
+        return;
+      }
       listElem.textContent = '正在读取 ' + path;
       fetch('/cgi-bin/luci/admin/nas/fileassistant/list?path=' + encodeURIComponent(path), {cache: 'no-store'})
         .then(function (response) {
@@ -253,11 +265,6 @@
         }).catch(function (err) {
           if (currentPath === path) listElem.textContent = '无法读取目录 ' + path + '：' + err.message;
         });
-      if (!opt.popState) {
-        history.pushState({path: path}, null, '?path=' + encodeURIComponent(path));
-      }
-      currentPath = path;
-      pathElem.value = currentPath;
     }
   }
 
@@ -329,13 +336,13 @@
   }
 
   function init() {
-    var initPath = '/tmp';
+    var initPath = '/';
     var match = location.search.match(/path=([^&]+)/);
     if (match && match[1]) {
       try {
         initPath = decodeURIComponent(match[1]);
       } catch (e) {
-        initPath = '/tmp';
+        initPath = '/';
       }
     }
     update_list(initPath, {popState: true});
@@ -348,11 +355,11 @@
   }
 
   window.addEventListener('popstate', function (evt) {
-    var path = '/';
     if (evt.state && evt.state.path) {
-      path = evt.state.path;
+      update_list(evt.state.path, {popState: true});
+    } else {
+      init();
     }
-    update_list(path, {popState: true});
   });
 
 })();
